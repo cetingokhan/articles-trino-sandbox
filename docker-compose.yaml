@@ -1,0 +1,154 @@
+version: '3.7'
+x-minio-common: &minio-common
+  image: quay.io/minio/minio:RELEASE.2024-06-29T01-20-47Z
+  command: server --console-address ":9001" http://minio{1...4}/data{1...2}
+  expose:
+    - "9000"
+    - "9001"
+  environment:
+    MINIO_ROOT_USER: minioadmin
+    MINIO_ROOT_PASSWORD: minioadmin
+  healthcheck:
+    test: ["CMD", "mc", "ready", "local"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+
+services:
+  minio1:
+    <<: *minio-common
+    hostname: minio1
+    volumes:
+      - data1-1:/data1
+      - data1-2:/data2
+
+  minio2:
+    <<: *minio-common
+    hostname: minio2
+    volumes:
+      - data2-1:/data1
+      - data2-2:/data2
+
+  minio3:
+    <<: *minio-common
+    hostname: minio3
+    volumes:
+      - data3-1:/data1
+      - data3-2:/data2
+
+  minio4:
+    <<: *minio-common
+    hostname: minio4
+    volumes:
+      - data4-1:/data1
+      - data4-2:/data2
+
+  nginx:
+    image: nginx:1.19.2-alpine
+    hostname: minio
+    volumes:
+      - ./src/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    depends_on:
+      - minio1
+      - minio2
+      - minio3
+      - minio4
+
+  mssql:
+    container_name: sql-server
+    image: mcr.microsoft.com/mssql/server:2017-latest
+    #image: mcr.microsoft.com/mssql/server:2017-CU11-ubuntu
+    restart: always
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "Password1"
+    ports:
+      - 1433:1433
+
+  postgres:
+    hostname: postgres
+    image: postgres:13
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: hive_metastore
+      POSTGRES_PASSWORD: Password1
+      POSTGRES_DB: hive_metastore
+    volumes:
+      - ./src/postgresql/:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "hive_metastore"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  hive-metastore:
+    hostname: hive-metastore
+    #image: 'bitsondatadev/hive-metastore:latest'
+    #image: 'my-hive-metastore:latest'
+    build: src/hive-metastore/.
+    ports:
+      - '9083:9083' # Metastore Thrift
+    volumes:
+      - ./src/hive-metastore/conf/metastore-site.xml:/opt/apache-hive-metastore-3.0.0-bin/conf/metastore-site.xml:ro
+    environment:
+      METASTORE_DB_HOSTNAME: postgres
+      METASTORE_TYPE: postgres
+    depends_on:
+      - postgres
+
+  trino:
+    hostname: trino
+    build: src/trino/.
+    #command: /usr/local/bin/docker-entrypoint.sh
+    user: root
+    volumes:
+      #- ./src/trino/install.properties:/ranger-3.0.0-SNAPSHOT-trino-plugin/install.properties
+      - ./src/trino/etc/catalog/minio.properties:/etc/trino/catalog/minio.properties:ro
+      - ./src/trino/etc/catalog/sql.properties:/etc/trino/catalog/sql.properties:ro
+    ports:
+      - '8089:8080'
+
+  # coordinator:
+  #   image: "lewuathe/trino-coordinator:354"
+  #   ports:
+  #     - "8080:8080"
+  #   container_name: "coordinator"
+  #   command: http://coordinator:8080 coordinator
+  #   volumes:
+  #     - ./src/trino/etc/catalog/sql.properties:/usr/local/trino/etc/catalog/sql.properties:ro
+  # worker0:
+  #   image: "lewuathe/trino-worker:354"
+  #   container_name: "worker0"
+  #   ports:
+  #     - "8081:8081"
+  #   command: http://coordinator:8080 worker0
+  #   volumes:
+  #     - ./src/trino/etc/catalog/sql.properties:/usr/local/trino/etc/catalog/sql.properties:ro
+  # worker1:
+  #   image: "lewuathe/trino-worker:354"
+  #   container_name: "worker1"
+  #   ports:
+  #     - "8082:8081"
+  #   command: http://coordinator:8080 worker1
+  #   volumes:
+  #     - ./src/trino/etc/catalog/sql.properties:/usr/local/trino/etc/catalog/sql.properties:ro
+
+volumes:
+  mssql-data:
+  postgres-data:
+  minio-data:
+  hive-metastore-data:
+  trino-data:
+  artifacts:
+  data1-1:
+  data1-2:
+  data2-1:
+  data2-2:
+  data3-1:
+  data3-2:
+  data4-1:
+  data4-2:
